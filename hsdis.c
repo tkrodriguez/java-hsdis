@@ -70,6 +70,19 @@ struct hsdis_app_data {
   char insn_options[256];
 };
 
+#if defined(LIBARCH_i386) || defined(LIBARCH_amd64)
+#ifdef ATT_SYNTAX
+#define PLATFORM_OPTIONS "att"
+#else
+#define PLATFORM_OPTIONS "intel"
+#endif
+#else
+#define PLATFORM_OPTIONS ""
+#endif
+static const char* platform_options = PLATFORM_OPTIONS;
+
+const char* hsdis_version_string = "built from " BINUTILS " with disassembler options \"" PLATFORM_OPTIONS "\" on " __DATE__ " at " __TIME__;
+
 static void* decode(struct hsdis_app_data* app_data, const char* options);
 
 #define DECL_APP_DATA(dinfo) \
@@ -150,6 +163,8 @@ static void* decode(struct hsdis_app_data* app_data, const char* options) {
 
     (*event_callback)(event_stream, "insns", (void*)start);
 
+    (*event_callback)(event_stream, "options='%s'",
+                      (void*) app_data->insn_options);
     (*event_callback)(event_stream, "mach name='%s'",
                       (void*) app_data->arch_info->printable_name);
     if (app_data->dinfo.bytes_per_line != 0) {
@@ -286,9 +301,14 @@ static void setup_app_data(struct hsdis_app_data* app_data,
   */
   set_optional_callbacks(app_data);
 
+  memset(app_data->insn_options, 0, sizeof(app_data->insn_options));
+  if (platform_options != NULL) {
+    parse_caller_options(app_data, platform_options);
+  }
   /* Look into caller_options for anything interesting. */
-  if (caller_options != NULL)
+  if (caller_options != NULL) {
     parse_caller_options(app_data, caller_options);
+  }
 
   /* Discover which architecture we are going to disassemble. */
   app_data->arch_name = &app_data->mach_option[0];
@@ -386,6 +406,11 @@ static void parse_caller_options(struct hsdis_app_data* app_data, const char* ca
   char* iop_base = app_data->insn_options;
   char* iop_limit = iop_base + sizeof(app_data->insn_options) - 1;
   char* iop = iop_base;
+
+  // Move to the end of any options already in the buffer
+  while (*iop != '\0' && iop < iop_limit) {
+    iop++;
+  }
   const char* p;
   for (p = caller_options; p != NULL; ) {
     const char* q = strchr(p, ',');
