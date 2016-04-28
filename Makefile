@@ -107,6 +107,7 @@ else
 ## OS = Darwin ##
 ifeq ($(OS),Darwin)
 CPU             = $(shell uname -m)
+JNIPLATFORM     = darwin
 ARCH1=$(CPU:x86_64=amd64)
 ARCH=$(ARCH1:i686=i386)
 ifdef LP64
@@ -143,6 +144,10 @@ endif   # AIX
 endif	# Linux
 endif	# SunOS
 
+ifeq ($(JNIPLATFORM),)
+JNIPLATFORM=$(OS)
+endif
+
 ifneq ($(ATT_SYNTAX),)
 CFLAGS += -DATT_SYNTAX
 endif
@@ -159,6 +164,8 @@ endif   # LP64
 
 JDKARCH=$(LIBARCH:i386=i586)
 
+BUILD_DIR	= $(shell cd build;pwd)
+
 ifeq            ($(BINUTILS),)
 # Pop all the way out of the workspace to look for binutils.
 # ...You probably want to override this setting.
@@ -167,7 +174,8 @@ else
 BINUTILSDIR	= $(shell cd $(BINUTILS);pwd)
 endif
 
-CPPFLAGS	+= -I$(BINUTILSDIR)/include -I$(BINUTILSDIR)/bfd -I$(TARGET_DIR)/bfd
+CPPFLAGS	+= -I$(BINUTILSDIR)/include -I$(BINUTILSDIR)/bfd -I$(TARGET_DIR)/bfd \
+			-I$(JAVA_HOME)/include -I$(JAVA_HOME)/include/$(JNIPLATFORM) -I$(BUILD_DIR)/include
 CPPFLAGS	+= -DLIBARCH_$(LIBARCH) -DLIBARCH=\"$(LIBARCH)\" -DLIB_EXT=\"$(LIB_EXT)\" -DBINUTILS="\"$(BINUTILS)\""
 
 TARGET_DIR	= build/$(OS)-$(JDKARCH)
@@ -180,6 +188,16 @@ endif
 
 SOURCE		= hsdis.c
 
+JNISOURCE       = java-hsdis.c
+
+JNITARGET	= $(TARGET_DIR)/java-hsdis$(LIB_EXT)
+
+JAVA_SOURCES    = sun/jvm/hotspot/hsdis/Disassembler.java sun/jvm/hotspot/hsdis/DisassemblyVisitor.java sun/jvm/hotspot/hsdis/LineDisassembler.java
+
+CLASSES_DIR     = $(BUILD_DIR)/classes
+
+JARTARGET       = $(BUILD_DIR)/hsdis.jar
+
 LIBRARIES =	$(TARGET_DIR)/bfd/libbfd.a \
 		$(TARGET_DIR)/opcodes/libopcodes.a \
 		$(TARGET_DIR)/libiberty/libiberty.a
@@ -191,12 +209,26 @@ DEMO_SOURCE	= hsdis-demo.c
 
 all:  $(TARGET)
 
+jnilibrary:  $(JNITARGET)
+
 both: all all64
 
 %64:
 	$(MAKE) LP64=1 ${@:%64=%}
 
 demo: $(TARGET) $(DEMO_TARGET)
+
+$(JARTARGET): $(CLASSES_DIR) $(JAVA_SOURCES:%.java=$(CLASSES_DIR)/%.class)
+	(cd $(CLASSES_DIR) && jar cf $(JARTARGET) $(JAVA_SOURCES:%.java=%.class))
+
+$(BUILD_DIR)/include/sun_jvm_hotspot_hsdis_Disassembler.h: $(JARTARGET) $(BUILD_DIR)/include 
+	javah -cp $(JARTARGET) -d $(BUILD_DIR)/include sun.jvm.hotspot.hsdis.Disassembler
+
+$(CLASSES_DIR) $(BUILD_DIR)/include:
+	mkdir $@
+
+$(CLASSES_DIR)/%.class: %.java
+	javac -d $(CLASSES_DIR) $(JAVA_SOURCES)
 
 $(LIBRARIES): $(TARGET_DIR) $(TARGET_DIR)/Makefile
 	if [ ! -f $@ ]; then cd $(TARGET_DIR); make all-opcodes; fi
@@ -206,6 +238,9 @@ $(TARGET_DIR)/Makefile:
 
 $(TARGET): $(SOURCE) $(LIBS) $(LIBRARIES) $(TARGET_DIR)
 	$(CC) $(OUTFLAGS) $(CPPFLAGS) $(CFLAGS) $(SOURCE) $(DLDFLAGS) $(LIBRARIES)
+
+$(JNITARGET): $(SOURCE) $(JNISOURCE) $(LIBS) $(LIBRARIES) $(TARGET_DIR) $(BUILD_DIR)/include/sun_jvm_hotspot_hsdis_Disassembler.h
+	$(CC) $(OUTFLAGS) $(CPPFLAGS) $(CFLAGS) $(SOURCE) $(JNISOURCE) $(DLDFLAGS) $(LIBRARIES)
 
 $(DEMO_TARGET): $(DEMO_SOURCE) $(TARGET) $(TARGET_DIR)
 	$(CC) $(OUTFLAGS) -DTARGET_DIR=\"$(TARGET_DIR)\" $(CPPFLAGS) -g $(CFLAGS/$(ARCH)) $(DEMO_SOURCE) $(LDFLAGS)
@@ -221,4 +256,4 @@ att intel:
 	mkdir $@
 
 clean:
-	rm -rf $(TARGET_DIR)
+	rm -rf $(TARGET_DIR) $(CLASSES_DIR) $(JARTARGET) $(BUILD_DIR)/include
